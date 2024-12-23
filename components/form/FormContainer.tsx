@@ -5,6 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 import { actionFunction } from '@/utils/types';
 import { redirect } from 'next/navigation';
 import { useRouter } from 'next/navigation';
+import { Skeleton } from '../ui/skeleton';
 
 const initialState = {
   message: '',
@@ -16,7 +17,7 @@ function FormContainer({
   children,
 }: {
   action: actionFunction;
-  type: 'create' | 'delete' | 'update'; // Type prop to specify action type
+  type: 'create' | 'delete' | 'update' | 'update_image'; // Type prop to specify action type
   children: React.ReactNode;
 }) {
   const [state, formAction, isPending] = useActionState(action, initialState);
@@ -45,8 +46,9 @@ function FormContainer({
   return (
     <form action={formAction}>
       {isPending && type !== 'delete' ? (
-        <div className='text-center text-gray-500'>Processing...</div>
+        <Skeleton className='h-48 w-full' />
       ) : (
+        // <div className='text-center text-gray-500'>Processing...</div>
         children
       )}
     </form>

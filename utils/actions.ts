@@ -112,12 +112,9 @@ export const deleteProductAction = async (prevState: { productId: string }) => {
       },
     });
     await deleteImage(product.image);
-
-    const message = 'Product removed successfully!';
-    console.log('Returning success message:', message); // Debug log
-    return { message };
+    //revalidatePath('/admin/products');
+    return { message: 'product removed' };
   } catch (error) {
-    console.error('Error in deleteProductAction:', error); // Debug error
     return renderError(error);
   }
 };
@@ -163,5 +160,26 @@ export const updateProductImageAction = async (
   prevState: any,
   formData: FormData
 ) => {
-  return { message: 'Product Image updated successfully' };
+  await getAuthUser();
+  try {
+    const image = formData.get('image') as File;
+    const productId = formData.get('id') as string;
+    const oldImageUrl = formData.get('url') as string;
+
+    const validatedFile = validateWithZodSchema(imageSchema, { image });
+    const fullPath = await uploadImage(validatedFile.image);
+    await deleteImage(oldImageUrl);
+    await db.product.update({
+      where: {
+        id: productId,
+      },
+      data: {
+        image: fullPath,
+      },
+    });
+    revalidatePath(`/admin/products/${productId}/edit`);
+    return { message: 'Product Image updated successfully' };
+  } catch (error) {
+    return renderError(error);
+  }
 };
