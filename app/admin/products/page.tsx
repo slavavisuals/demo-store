@@ -66,7 +66,7 @@ async function AdminProductPage() {
 function DeleteProduct({ productId }: { productId: string }) {
   const deleteProduct = deleteProductAction.bind(null, { productId });
   return (
-    <FormContainer action={deleteProduct} type='delete'>
+    <FormContainer action={deleteProduct}>
       <IconButton actionType='delete' />
     </FormContainer>
   );
