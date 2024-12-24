@@ -205,6 +205,7 @@ export const toggleFavoriteAction = async (prevState: {
 }) => {
   const user = await getAuthUser();
   const { productId, favoriteId, pathname } = prevState;
+
   try {
     if (favoriteId) {
       await db.favorite.delete({
@@ -221,7 +222,7 @@ export const toggleFavoriteAction = async (prevState: {
       });
     }
     revalidatePath(pathname);
-    return { message: favoriteId ? 'Removed from Faves' : 'Added to Faves' };
+    return { message: favoriteId ? 'removed from faves' : 'added to faves' };
   } catch (error) {
     return renderError(error);
   }
