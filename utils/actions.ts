@@ -1,7 +1,7 @@
 'use server';
 
 import db from '@/utils/db';
-import { currentUser } from '@clerk/nextjs/server';
+import { currentUser, auth } from '@clerk/nextjs/server';
 import { redirect } from 'next/navigation';
 import {
   imageSchema,
@@ -11,6 +11,7 @@ import {
 } from './schemas';
 import { deleteImage, uploadImage } from './supabase';
 import { revalidatePath } from 'next/cache';
+import { Cart } from '@prisma/client';
 
 const getAuthUser = async () => {
   const user = await currentUser();
@@ -27,7 +28,7 @@ const getAdminUser = async () => {
 const renderError = (error: unknown): { message: string } => {
   console.log(error);
   return {
-    message: error instanceof Error ? error.message : 'An error occurred',
+    message: error instanceof Error ? error.message : 'an error occurred',
   };
 };
 
@@ -74,7 +75,6 @@ export const createProductAction = async (
   try {
     const rawData = Object.fromEntries(formData);
     const file = formData.get('image') as File;
-
     const validatedFields = validateWithZodSchema(productSchema, rawData);
     const validatedFile = validateWithZodSchema(imageSchema, { image: file });
     const fullPath = await uploadImage(validatedFile.image);
@@ -86,13 +86,10 @@ export const createProductAction = async (
         clerkId: user.id,
       },
     });
-
-    // Return success message
-    return { message: 'Product created successfully!' };
   } catch (error) {
     return renderError(error);
   }
-  //redirect('/admin/products');
+  redirect('/admin/products');
 };
 
 export const fetchAdminProducts = async () => {
@@ -300,6 +297,204 @@ export const fetchProductRating = async (productId: string) => {
   };
 };
 
-export const fetchProductReviewsByUser = async () => {};
-export const deleteReviewAction = async () => {};
-export const findExistingReview = async () => {};
+export const fetchProductReviewsByUser = async () => {
+  const user = await getAuthUser();
+  const reviews = await db.review.findMany({
+    where: {
+      clerkId: user.id,
+    },
+    select: {
+      id: true,
+      rating: true,
+      comment: true,
+      product: {
+        select: {
+          image: true,
+          name: true,
+        },
+      },
+    },
+  });
+  return reviews;
+};
+
+export const deleteReviewAction = async (prevState: { reviewId: string }) => {
+  const { reviewId } = prevState;
+  const user = await getAuthUser();
+
+  try {
+    await db.review.delete({
+      where: {
+        id: reviewId,
+        clerkId: user.id,
+      },
+    });
+
+    revalidatePath('/reviews');
+    return { message: 'Review deleted successfully' };
+  } catch (error) {
+    return renderError(error);
+  }
+};
+export const findExistingReview = async (userId: string, productId: string) => {
+  return db.review.findFirst({
+    where: {
+      clerkId: userId,
+      productId,
+    },
+  });
+};
+
+//Shopping Cart actions
+
+export const fetchCartItems = async () => {
+  const { userId } = await auth();
+  const cart = await db.cart.findFirst({
+    where: {
+      clerkId: userId ?? '',
+    },
+    select: {
+      numItemsInCart: true,
+    },
+  });
+  return cart?.numItemsInCart || 0;
+};
+
+const fetchProduct = async (productId: string) => {
+  const product = await db.product.findUnique({
+    where: {
+      id: productId,
+    },
+  });
+  if (!product) {
+    throw new Error('Product not found');
+  }
+  return product;
+};
+
+//variable to grab latest product data
+const includeProductClause = {
+  cartItems: {
+    include: {
+      product: true,
+    },
+  },
+};
+
+export const fetchOrCreateCart = async ({
+  userId,
+  errorOnFailure = false,
+}: {
+  userId: string;
+  errorOnFailure?: boolean;
+}) => {
+  let cart = await db.cart.findFirst({
+    where: {
+      clerkId: userId,
+    },
+    include: includeProductClause,
+  });
+
+  if (!cart && errorOnFailure) {
+    throw new Error('Cart not found');
+  }
+
+  if (!cart) {
+    cart = await db.cart.create({
+      data: {
+        clerkId: userId,
+      },
+      include: includeProductClause,
+    });
+  }
+
+  return cart;
+};
+
+const updateOrCreateCartItem = async ({
+  productId,
+  cartId,
+  amount,
+}: {
+  productId: string;
+  cartId: string;
+  amount: number;
+}) => {
+  let cartItem = await db.cartItem.findFirst({
+    where: {
+      productId,
+      cartId,
+    },
+  });
+  if (cartItem) {
+    cartItem = await db.cartItem.update({
+      where: {
+        id: cartItem.id,
+      },
+      data: {
+        amount: cartItem.amount + amount,
+      },
+    });
+  } else {
+    cartItem = await db.cartItem.create({
+      data: { amount, productId, cartId },
+    });
+  }
+};
+
+export const updateCart = async (cart: Cart) => {
+  const cartItems = await db.cartItem.findMany({
+    where: {
+      cartId: cart.id,
+    },
+    include: {
+      product: true,
+    },
+    orderBy: {
+      createdAt: 'asc',
+    },
+  });
+  let numItemsInCart = 0;
+  let cartTotal = 0;
+
+  for (const item of cartItems) {
+    numItemsInCart += item.amount;
+    cartTotal += item.amount * item.product.price;
+  }
+  const tax = cart.taxRate * cartTotal;
+  const shipping = cartTotal ? cart.shipping : 0;
+  const orderTotal = cartTotal + tax + shipping;
+
+  const currentCart = await db.cart.update({
+    where: {
+      id: cart.id,
+    },
+    data: {
+      numItemsInCart,
+      cartTotal,
+      tax,
+      orderTotal,
+    },
+    include: includeProductClause,
+  });
+  return currentCart;
+};
+
+export const addToCartAction = async (prevState: any, formData: FormData) => {
+  const user = await getAuthUser();
+  try {
+    const productId = formData.get('productId') as string;
+    const amount = Number(formData.get('amount'));
+    await fetchProduct(productId);
+    const cart = await fetchOrCreateCart({ userId: user.id });
+    await updateOrCreateCartItem({ productId, cartId: cart.id, amount });
+    await updateCart(cart);
+  } catch (error) {
+    return renderError(error);
+  }
+  redirect('/cart');
+};
+
+export const removeCartItemAction = async () => {};
+
+export const updateCartItemAction = async () => {};
