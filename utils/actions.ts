@@ -557,11 +557,38 @@ export const updateCartItemAction = async ({
 
 export const createOrderAction = async (prevState: any, formData: FormData) => {
   const user = await getAuthUser();
+
+  //storing values here as we can't use redirect inside catch block
+  let orderId: null | string = null;
+  let cartId: null | string = null;
+
   try {
+    //we fetch existing or create new cart
     const cart = await fetchOrCreateCart({
       userId: user.id,
       errorOnFailure: true,
     });
+    //once we do we setting it to our var
+    cartId = cart.id;
+
+    /**
+     * Then remove all orders where paid is false..
+     * Explanation: once user is able to use checkout with Stripe they can easily cancel the payment
+     * so we need to still create the order but with paid=false.
+     * Since We don't want to collect tons of instances of orders where paid is false
+     * before we create new one ones  we get rid of all unpaid ones
+     */
+    await db.order.deleteMany({
+      where: {
+        clerkId: user.id,
+        isPaid: false,
+      },
+    });
+
+    /**
+     * create new order where by DEFAULT isPaid is false (set in Prisma schema)
+     * So we can only access the order once payment is complete
+     */
     const order = await db.order.create({
       data: {
         clerkId: user.id,
@@ -572,16 +599,11 @@ export const createOrderAction = async (prevState: any, formData: FormData) => {
         email: user.emailAddresses[0].emailAddress,
       },
     });
-
-    await db.cart.delete({
-      where: {
-        id: cart.id,
-      },
-    });
+    orderId = order.id;
   } catch (error) {
     return renderError(error);
   }
-  redirect('/orders');
+  redirect(`/checkout?orderId=${orderId}&cartId=${cartId}`);
 };
 
 export const fetchUserOrders = async () => {
